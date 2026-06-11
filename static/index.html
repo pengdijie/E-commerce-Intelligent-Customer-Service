@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能客服多Agent系统</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0;height:100vh;display:flex;flex-direction:column}
+header{background:#1e293b;padding:16px 24px;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:18px;font-weight:600;cursor:pointer}
+header .meta{font-size:12px;color:#94a3b8}
+#messages{flex:1;overflow-y:auto;padding:24px;max-width:900px;margin:0 auto;width:100%}
+.msg{display:flex;margin-bottom:16px;gap:12px}
+.msg.user{flex-direction:row-reverse}
+.avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;flex-shrink:0;color:#fff}
+.msg.user .avatar{background:#3b82f6}
+.msg.assistant .avatar{background:#10b981}
+.bubble{background:#1e293b;border:1px solid #334155;padding:12px 16px;border-radius:12px;max-width:70%;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:#1e3a8a;border-color:#3b82f6}
+.badges{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#334155;color:#cbd5e1}
+.badge.ok{background:#064e3b;color:#6ee7b7}
+.badge.warn{background:#7c2d12;color:#fdba74}
+#input-area{background:#1e293b;border-top:1px solid #334155;padding:16px 24px}
+#input-wrapper{max-width:900px;margin:0 auto;display:flex;gap:12px;align-items:flex-end}
+#input{flex:1;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:12px;padding:12px 16px;font-size:14px;font-family:inherit;resize:none;max-height:120px;outline:none}
+#input:focus{border-color:#3b82f6}
+#send{background:#3b82f6;color:#fff;border:none;border-radius:12px;padding:12px 24px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+#send:hover{background:#2563eb}
+#send:disabled{background:#475569;cursor:not-allowed}
+.typing{display:inline-flex;gap:4px;padding:4px 0}
+.typing span{width:6px;height:6px;background:#94a3b8;border-radius:50%;animation:bounce 1.4s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-6px);opacity:1}}
+.empty{text-align:center;color:#64748b;padding:80px 20px}
+.empty h2{font-size:20px;margin-bottom:8px;color:#cbd5e1}
+.empty p{font-size:14px;margin-bottom:20px}
+.suggestions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.suggestion{background:#1e293b;border:1px solid #334155;padding:8px 16px;border-radius:20px;font-size:13px;cursor:pointer;color:#cbd5e1}
+.suggestion:hover{border-color:#3b82f6;color:#fff}
+.progress{font-size:12px;color:#94a3b8;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.progress::before{content:"";width:6px;height:6px;border-radius:50%;background:#3b82f6;animation:pulse 1s infinite}
+.progress.done::before{background:#10b981;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.cursor{display:inline-block;width:7px;height:14px;background:#94a3b8;margin-left:2px;vertical-align:text-bottom;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+</style></head>
+<body>
+<header>
+  <h1 id="title" title="双击开始新会话">🤖 智能客服多Agent系统</h1>
+  <div class="meta" id="session-info">会话: 未开始</div>
+</header>
+<div id="messages">
+  <div class="empty" id="empty-state">
+    <h2>👋 你好，我是智能客服</h2>
+    <p>我可以帮你查询订单、了解理财产品、办理退款等。试试下面的问题：</p>
+    <div class="suggestions">
+      <div class="suggestion" data-q="介绍一下理财产品A">介绍一下理财产品A</div>
+      <div class="suggestion" data-q="退款政策是什么样的？">退款政策是什么样的？</div>
+      <div class="suggestion" data-q="开户需要哪些步骤？">开户需要哪些步骤？</div>
+      <div class="suggestion" data-q="查一下我的订单 ORDER_001">查一下我的订单 ORDER_001</div>
+    </div>
+  </div>
+</div>
+<div id="input-area">
+  <div id="input-wrapper">
+    <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行..."></textarea>
+    <button id="send">发送</button>
+  </div>
+</div>
+<script>
+const API = "/api/chat/stream";
+const messagesEl = document.getElementById("messages");
+const emptyEl = document.getElementById("empty-state");
+const inputEl = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const sessionInfoEl = document.getElementById("session-info");
+const titleEl = document.getElementById("title");
+let sessionId = null;
+let busy = false;
+
+function autoResize(){inputEl.style.height="auto";inputEl.style.height=Math.min(inputEl.scrollHeight,120)+"px"}
+inputEl.addEventListener("input",autoResize);
+
+function addUserMsg(text){
+  if(emptyEl && emptyEl.parentNode) emptyEl.remove();
+  const wrap=document.createElement("div");
+  wrap.className="msg user";
+  wrap.innerHTML='<div class="avatar">我</div>';
+  const bubble=document.createElement("div");
+  bubble.className="bubble";
+  bubble.textContent=text;
+  wrap.appendChild(bubble);
+  messagesEl.appendChild(wrap);
+  messagesEl.scrollTop=messagesEl.scrollHeight;
+}
+
+// 创建一个空的 assistant 气泡，返回内部各个可操作节点 — 后续流式追加用
+function createAssistantBubble(){
+  if(emptyEl && emptyEl.parentNode) emptyEl.remove();
+  const wrap=document.createElement("div");
+  wrap.className="msg assistant";
+  const avatar=document.createElement("div");
+  avatar.className="avatar";
+  avatar.textContent="客服";
+  const bubble=document.createElement("div");
+  bubble.className="bubble";
+  const progress=document.createElement("div");
+  progress.className="progress";
+  progress.textContent="🔄 准备中...";
+  const content=document.createElement("div");
+  content.className="content";
+  const cursor=document.createElement("span");
+  cursor.className="cursor";
+  content.appendChild(cursor);
+  const badges=document.createElement("div");
+  badges.className="badges";
+  bubble.appendChild(progress);
+  bubble.appendChild(content);
+  bubble.appendChild(badges);
+  wrap.appendChild(avatar);
+  wrap.appendChild(bubble);
+  messagesEl.appendChild(wrap);
+  messagesEl.scrollTop=messagesEl.scrollHeight;
+  return {progress, content, cursor, badges};
+}
+
+function addBadge(parent, text, cls){
+  const b=document.createElement("span");
+  b.className="badge"+(cls?" "+cls:"");
+  b.textContent=text;
+  parent.appendChild(b);
+}
+
+async function send(text){
+  if(busy||!text.trim())return;
+  busy=true;sendBtn.disabled=true;
+  addUserMsg(text);
+  inputEl.value="";autoResize();
+  const ui = createAssistantBubble();
+
+  let buffer="";
+  let tokenSeen=false;
+  try{
+    const res=await fetch(API,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:text,user_id:"web_user",session_id:sessionId})
+    });
+    if(!res.ok){
+      const err=await res.text();
+      ui.progress.remove();
+      ui.cursor.remove();
+      ui.content.textContent="❌ 请求失败 ("+res.status+"): "+err;
+      return;
+    }
+    const reader=res.body.getReader();
+    const decoder=new TextDecoder();
+    while(true){
+      const {done, value}=await reader.read();
+      if(done)break;
+      buffer += decoder.decode(value, {stream:true});
+      const lines = buffer.split("\n");
+      buffer = lines.pop();      // 保留最后一行（可能未完整）
+      for(const line of lines){
+        if(!line.startsWith("data: "))continue;
+        let evt;
+        try{ evt = JSON.parse(line.slice(6)); }catch{ continue; }
+        handleEvent(evt, ui, ()=>{tokenSeen=true});
+      }
+    }
+  }catch(e){
+    ui.progress.remove();
+    ui.cursor.remove();
+    ui.content.textContent="❌ 网络错误: "+e.message;
+  }finally{
+    ui.cursor.remove();
+    if(!tokenSeen && !ui.content.textContent){
+      // 没收到任何 token（比如合规拦截直接返回） — 把 done 里带的 response 兜底显示
+    }
+    busy=false;sendBtn.disabled=false;inputEl.focus();
+  }
+}
+
+function handleEvent(evt, ui, onToken){
+  switch(evt.type){
+    case "progress":
+      ui.progress.textContent = evt.message || "处理中...";
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      break;
+    case "token":
+      onToken();
+      // 在光标前插入文本节点，保留闪烁光标在尾部
+      ui.cursor.insertAdjacentText("beforebegin", evt.content);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      break;
+    case "done":
+      sessionId = evt.session_id;
+      sessionInfoEl.textContent = "会话: "+sessionId.slice(0,8);
+      ui.progress.classList.add("done");
+      ui.progress.textContent = "✓ 完成";
+      ui.cursor.remove();
+      // 没流式 token 时（如合规拦截），用 done 里带的 response 兜底
+      if(!ui.content.textContent.trim() && evt.response){
+        ui.content.textContent = evt.response;
+      }
+      if(evt.intent){
+        addBadge(ui.badges, "意图: "+evt.intent);
+      }
+      if(evt.compliance_passed !== undefined){
+        addBadge(ui.badges,
+          evt.compliance_passed ? "✓ 合规通过" : "⚠ 合规拦截",
+          evt.compliance_passed ? "ok" : "warn");
+      }
+      if(evt.usage && evt.usage.total_tokens){
+        addBadge(ui.badges,
+          "🎫 "+evt.usage.total_tokens+" tokens (↑ "+evt.usage.input_tokens+" ↓ "+evt.usage.output_tokens+")");
+      }
+      break;
+    case "error":
+      ui.progress.remove();
+      ui.cursor.remove();
+      ui.content.textContent = "❌ "+evt.message;
+      break;
+  }
+}
+
+sendBtn.addEventListener("click",()=>send(inputEl.value));
+inputEl.addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send(inputEl.value)}
+});
+document.querySelectorAll(".suggestion").forEach(el=>{
+  el.addEventListener("click",()=>send(el.dataset.q));
+});
+titleEl.addEventListener("dblclick",()=>{
+  sessionId=null;
+  location.reload();
+});
+inputEl.focus();
+</script>
+</body>
+</html>
+

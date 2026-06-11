@@ -1,0 +1,33 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Data
+wiki_knowledge/
+vector_store/
+eval/testset.jsonl
+eval/result.md
+eval/result_new.md
+eval/result_reranker.md
+
+# Datasets
+E-commerce_dataset/
+E-commerce_dataset.zip
+JDDC/
+JDDC.zip
+online_shopping_10_cats.csv
+online_shopping_10_cats.zip
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
